@@ -1,0 +1,512 @@
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public class Win32 {
+    [DllImport("kernel32.dll")]
+    public static extern IntPtr GetConsoleWindow();
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool ShowWindow(IntPtr hwnd, int nCmdShow);
+}
+"@
+
+
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+
+function Show-TerminalWindow {
+    $consoleHwnd = [Win32]::GetConsoleWindow()
+    if ($consoleHwnd -ne 0) {
+        [Win32]::ShowWindow($consoleHwnd, 5)
+    }
+}
+
+Show-TerminalWindow | Out-Null
+
+
+
+function Show-RequiredAppsGUI {
+
+function Invoke-ZipInstaller {
+    param (
+        [string]$ZipUrl,
+        [string]$InstallerName,
+        [string]$InstallerArgs = ""
+    )
+    $stealthFolder = Join-Path $env:TEMP "SilentInstallers"
+    $zipPath = Join-Path $stealthFolder ([IO.Path]::GetFileName($ZipUrl) -replace '\?.*', '')
+    $extractPath = Join-Path $stealthFolder ([IO.Path]::GetFileNameWithoutExtension($zipPath))
+
+    try {
+        if (!(Test-Path $stealthFolder)) {
+            New-Item -Path $stealthFolder -ItemType Directory -Force | Out-Null
+        } else {
+            Get-ChildItem -Path $stealthFolder -Recurse | Remove-Item -Force -Recurse -ErrorAction SilentlyContinue
+        }
+
+        Write-Host "Downloading Selected Application..."
+        $wc = New-Object Net.WebClient
+        $wc.DownloadFile($ZipUrl, $zipPath)
+
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        [IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $extractPath)
+
+        $installerPath = Join-Path $extractPath $InstallerName
+        if (Test-Path $installerPath) {
+            Write-Host "Installing the Application..."
+            $extension = [System.IO.Path]::GetExtension($installerPath)
+
+            if ($extension -eq ".msi") {
+                $args = "/i `"$installerPath`""
+                if (-not [string]::IsNullOrWhiteSpace($InstallerArgs)) {
+                    $args += " $InstallerArgs"
+                }
+                Start-Process "msiexec.exe" -ArgumentList $args -Wait
+            } else {
+                if ([string]::IsNullOrWhiteSpace($InstallerArgs)) {
+                    Start-Process $installerPath -Wait
+                } else {
+                    Start-Process $installerPath -ArgumentList $InstallerArgs -Wait
+                }
+            }
+
+            Write-Host "Application Installed Successfully!"
+        } else {
+            Write-Host "Installation failed: $InstallerName not found in ZIP."
+        }
+
+        Remove-Item -Path $stealthFolder -Recurse -Force -ErrorAction SilentlyContinue
+    } catch {
+        Write-Host "Installation failed: $_"
+    }
+}
+
+function Invoke-DualInstaller {
+    param (
+        [string]$Url1,
+        [string]$File1,
+        [string]$Url2,
+        [string]$File2
+    )
+    Invoke-ZipInstaller -ZipUrl $Url1 -InstallerName $File1 -InstallerArgs ""
+    Invoke-ZipInstaller -ZipUrl $Url2 -InstallerName $File2 -InstallerArgs ""
+}
+
+function Invoke-DatabaseExtractor {
+    param (
+        [string]$ZipUrl
+    )
+    $stealthFolder = Join-Path $env:TEMP "DBExtractor"
+    $zipPath = Join-Path $stealthFolder ([IO.Path]::GetFileName($ZipUrl) -replace '\?.*', '')
+    $extractPath = Join-Path $stealthFolder ([IO.Path]::GetFileNameWithoutExtension($zipPath))
+
+    try {
+        if (!(Test-Path $stealthFolder)) {
+            New-Item -Path $stealthFolder -ItemType Directory -Force | Out-Null
+        } else {
+            Get-ChildItem -Path $stealthFolder -Recurse | Remove-Item -Force -Recurse -ErrorAction SilentlyContinue
+        }
+
+        Write-Host "Downloading Empty Database..."
+        $wc = New-Object Net.WebClient
+        $wc.DownloadFile($ZipUrl, $zipPath)
+
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        [IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $extractPath)
+
+        $sourceFolder = Join-Path $extractPath "Empty database updated 2018"
+        $foldersToCopy = @("Passis", "DTRF")
+
+        foreach ($folder in $foldersToCopy) {
+            $src = Join-Path $sourceFolder $folder
+            $dest = Join-Path "C:\" $folder
+            if (Test-Path $src) {
+                Copy-Item -Path $src -Destination $dest -Recurse -Force
+                Write-Host "$folder copied to C:\"
+            } else {
+                Write-Host "$folder not found inside ZIP."
+            }
+        }
+
+        Remove-Item -Path $stealthFolder -Recurse -Force -ErrorAction SilentlyContinue
+    } catch {
+        Write-Host "Database installation failed: $_"
+    }
+}
+
+
+$apps = @{ 
+    "Custom Installers" = [ordered]@{
+        "Crystal Report 2008 x86-x64" = { Invoke-DualInstaller -Url1 "https://www.dropbox.com/scl/fi/li0nfkxvhbk4j1odnv5gj/CRRedist2008_x86.zip?rlkey=rj98hxcp9yruwn6wmzhb1mydu&st=z45kx3h7&dl=1" -File1 "CRRedist2008_x86.msi" -Url2 "https://www.dropbox.com/scl/fi/wl8s5nrrvsmrp2jbqmv2w/CRRedist2008_x64.zip?rlkey=fx1yd12i6a6vegtqbxjesqzz4&st=sfbaoq3v&dl=1" -File2 "CRRedist2008_x64.msi" }
+        "SQLSysClrTypes_2012" = { Invoke-ZipInstaller -ZipUrl "https://www.dropbox.com/scl/fi/2b54v6svtyb3085ps9fh2/SQLSysClrTypes_2012.zip?rlkey=tjwss58soqjkkqb9946xxhdn0&st=6px25njz&dl=1" -InstallerName "SQLSysClrTypes_2012.msi" -InstallerArgs "" }
+        "SQLSysClrTypes_2014" = { Invoke-ZipInstaller -ZipUrl "https://www.dropbox.com/scl/fi/026t79ne00ooo24c6bh4p/SQLSysClrTypes2014.zip?rlkey=wfm3yh0apskowpcofwq6vngxp&st=9q0k9ccd&dl=1" -InstallerName "SQLSysClrTypes2014.msi" -InstallerArgs "" }
+        "Report Viewer 2010" = { Invoke-ZipInstaller -ZipUrl "https://www.dropbox.com/scl/fi/m9ymyd0v526siv7nhx1bd/ReportViewer_2010.zip?rlkey=3m8yb6ugkysvyl33ng7p0m0hl&st=mcv5i6q9&dl=1" -InstallerName "ReportViewer_2010.exe" -InstallerArgs "" }
+        "ReportViewer_2012_Runtime" = { Invoke-ZipInstaller -ZipUrl "https://www.dropbox.com/scl/fi/gugzl75abgfd5gqcqmh6e/ReportViewer_2012_Runtime.zip?rlkey=3a20fvhpwqudcchlk3uzbsi3j&st=kdw4zp0g&dl=1" -InstallerName "ReportViewer_2012_Runtime.msi" -InstallerArgs "" }
+        "ReportViewer_2015_Runtime" = { Invoke-ZipInstaller -ZipUrl "https://www.dropbox.com/scl/fi/84j2mein1qaboareseler/ReportViewer_2015_Runtime.zip?rlkey=nk3qq89tismfz91ldq3xxd2xo&st=1yuq55ol&dl=1" -InstallerName "ReportViewer_2015_Runtime.msi" -InstallerArgs "" }
+        "SAP Crystal Reports Runtime" = { Invoke-ZipInstaller -ZipUrl "https://www.dropbox.com/scl/fi/zuj33bptwo5e0gslokqw6/SAP-Crystal-Reports-Runtime.zip?rlkey=2l2v7j7a8oqk26ljnfyqhm3a5&st=chrzgufa&dl=1" -InstallerName "SAP Crystal Reports Runtime.MSI" -InstallerArgs "" }
+        "Microsoft Visual C++ 2015-2019 x64" = { Invoke-ZipInstaller -ZipUrl "https://www.dropbox.com/scl/fi/0y7y1z678mua3cz18gufj/Microsoft-Visual-C-2015-2019-x64.zip?rlkey=9hscr5v3f099zrvgx5vy7t90n&st=pzwrlgf4&dl=1" -InstallerName "Microsoft Visual C++ 2015-2019 x64.exe" -InstallerArgs "" }
+        "Access Database Engine 2010" = { Invoke-ZipInstaller -ZipUrl "https://www.dropbox.com/scl/fi/9r78985meg9zujl3ournn/AccessDatabaseEngine.zip?rlkey=zoutnhxk8j3uij9p7o0fpq97j&st=0c6urhw3&dl=1" -InstallerName "AccessDatabaseEngine.exe" -InstallerArgs "" }
+        "Microsoft POS for .NET 1.14.1" = { Invoke-ZipInstaller -ZipUrl "https://www.dropbox.com/scl/fi/qn4j8s21vuh6yas9cw2kq/Microsoft-POS-for-.NET-1.14.1.zip?rlkey=0w84m3ustayhi9dvir0red9e8&st=vb7a1w7d&dl=1" -InstallerName "Microsoft POS for .NET 1.14.1.msi" -InstallerArgs "" }
+        "Empty Database Updated 2008" = { Invoke-DatabaseExtractor -ZipUrl "https://www.dropbox.com/scl/fi/0bg8qtg9x0gtwnb3ttqz3/Empty-database-updated-2018.zip?rlkey=xplr7zjt5gbnzt1dh2rmh1ez1&st=p9wp7td9&dl=1" }
+    }
+	"System ODBC Configuration" = [ordered]@{
+	"ODBC Configuration" = {
+
+    $scriptBlock = @'
+function Add-UserDSN {
+    param (
+        [string]$Name,
+        [string]$DbPath
+    )
+
+    $driver = "Microsoft Access Driver (*.mdb)"
+
+    if (!(Test-Path $DbPath)) {
+        Write-Host "Database file not found: $DbPath"
+        return
+    }
+
+    $dsnArgs = "DSN=$Name;DBQ=$DbPath;Description=$Name Access Database"
+    $quotedDsnArgs = "`"DSN=$Name;DBQ=$DbPath;Description=$Name Access Database`""
+    $quotedDriver = "`"$driver`""
+    $command = "/a {CONFIGDSN $quotedDriver $quotedDsnArgs}"
+
+    $proc = Start-Process -FilePath "odbcconf.exe" -ArgumentList $command -Wait -PassThru -NoNewWindow
+
+    if ($proc.ExitCode -eq 0) {
+        Write-Host "Created User DSN: $Name -> $DbPath"
+    } else {
+        Write-Host "Failed to create DSN: $Name (Exit code: $($proc.ExitCode))"
+    }
+}
+
+$dsnMappings = @{
+    "ActSysMDB" = "C:\Passis\wdb\ACTSYS.MDB"
+    "CRDRMDB"   = "C:\Passis\wdb\crdr.mdb"
+    "_CRDRMDB"  = "C:\Passis\wdb\crdr_.mdb"
+    "DMS"       = "C:\Passis\wdb\dms.mdb"
+    "PledgeMDB" = "C:\Passis\wdb\pledge.mdb"
+    "SalesMDB"  = "C:\Passis\wdb\sales.mdb"
+    "tables"    = "C:\Passis\wdb\tables.mdb"
+    "DTR"       = "C:\DTRF\DTR.MDB"
+}
+
+foreach ($dsn in $dsnMappings.Keys) {
+    Add-UserDSN -Name $dsn -DbPath $dsnMappings[$dsn]
+}
+'@
+
+    $tempScript = "$env:TEMP\AddUserDSNs.ps1"
+    $scriptBlock | Out-File -FilePath $tempScript -Encoding UTF8
+
+
+    $ps32 = "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe"
+
+    
+    Start-Process -FilePath $ps32 -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$tempScript`"" -Wait -WindowStyle Hidden
+
+    [System.Windows.Forms.MessageBox]::Show("ODBC Configuration Completed!", "ODBC Setup", 'OK', 'Information')
+}
+
+}
+
+}
+
+
+$form = New-Object Windows.Forms.Form
+$form.Text = "LemarToolbox Installer"
+$form.Size = New-Object Drawing.Size(420, 650)
+$form.StartPosition = "CenterScreen"
+$form.AutoScroll = $true
+$form.Topmost = $false
+$form.ShowInTaskbar = $true
+$form.FormBorderStyle = 'FixedDialog'
+$form.MaximizeBox = $false
+$form.MinimizeBox = $true
+
+
+$form.FormBorderStyle = 'FixedDialog'
+$form.MaximizeBox = $false
+$form.MinimizeBox = $true
+$form.BackColor = [Drawing.Color]::Firebrick
+
+
+$defaultFont = New-Object Drawing.Font("Segoe UI", 11)
+$form.Font = $defaultFont
+
+$checkboxes = @{}
+$categoryCheckboxes = @{}
+$localToggleState = @{}
+$y = 20
+
+foreach ($category in $apps.Keys) {
+    $label = New-Object Windows.Forms.Label
+    $label.Text = $category
+    $label.Font = New-Object Drawing.Font("Arial", 10, [Drawing.FontStyle]::Bold)
+    $label.Location = New-Object Drawing.Point(20, $y)
+    $label.AutoSize = $true
+    $form.Controls.Add($label)
+    $y += 25
+
+    $categoryCheckboxes[$category] = @()
+    $localToggleState[$category] = $false
+
+    foreach ($appName in $apps[$category].Keys) {
+        $cb = New-Object Windows.Forms.CheckBox
+        $cb.Text = $appName
+        $leftMargin = 50
+		$cb.Location = New-Object Drawing.Point($leftMargin, $y)
+        $cb.AutoSize = $true
+        $form.Controls.Add($cb)
+        $checkboxes[$appName] = $cb
+        $categoryCheckboxes[$category] += $cb
+        $y += 25
+    }
+
+    $y += 35
+}
+
+
+$btnGlobalToggle = New-Object Windows.Forms.Button
+$btnGlobalToggle.Text = "Select All"
+$btnGlobalToggle.Size = New-Object Drawing.Size(100, 25)
+$btnGlobalToggle.Location = New-Object Drawing.Point(40, $y)
+$btnGlobalToggle.BackColor = [Drawing.Color]::Gold
+$btnGlobalToggle.ForeColor = [Drawing.Color]::Black
+$btnGlobalToggle.Font = $boldFont
+
+
+$btnGlobalToggle.Add_Click({
+    
+    $anyUnchecked = $checkboxes.Values | Where-Object { -not $_.Checked }
+
+    $shouldSelect = $anyUnchecked.Count -gt 0
+
+    foreach ($cb in $checkboxes.Values) {
+        $cb.Checked = $shouldSelect
+    }
+
+    $btnGlobalToggle.Text = if ($shouldSelect) { "Unselect All" } else { "Select All" }
+})
+
+$form.Controls.Add($btnGlobalToggle)
+$y += 35
+
+
+
+
+$button = New-Object Windows.Forms.Button
+$button.Text = "Install Selected Applications"
+$button.Size = New-Object Drawing.Size(250, 30)
+$button.Location = New-Object Drawing.Point(40, $y)
+$button.BackColor = [Drawing.Color]::Gold
+$button.ForeColor = [Drawing.Color]::Black
+$button.Font = $boldFont
+$button.Add_Click({
+    Write-Host "`nDownloading Selected Application..."
+    $button.Enabled = $false
+    foreach ($category in $apps.Keys) {
+        foreach ($appName in $apps[$category].Keys) {
+            if ($checkboxes[$appName].Checked) {
+                Write-Host "`n--- Installing: $appName ---"
+                try {
+                    & $apps[$category][$appName]
+                } catch {
+                    Write-Host "Installation failed: $_"
+                }
+            }
+        }
+    }
+    Write-Host "`nAll selected applications processed."
+    $button.Enabled = $true
+})
+$form.Controls.Add($button)
+$form.Add_Shown({ $form.Activate() })
+[void]$form.ShowDialog()
+
+}
+
+
+$apps = @{
+    "RDPORTAL DESKTOP" = "https://portalv3.rdpawnshop.com/app/winapplication/rdportal/RDPortalDesktop.application"
+    "E-RECOMM" = "https://portalv3.rdpawnshop.com/app/winapplication/erecomm/waERecom.application"
+    "E-DTR" = "https://portalv3.rdpawnshop.com/app/WinApplication/edtr/E-DTR.application"
+    "Online CRDR" = "https://portalv3.rdpawnshop.com/app/winapplication/onlinecrdr/CRDR.application"
+    "Remact" = "https://portalv3.rdpawnshop.com/app/winapplication/remact/RemAct.application"
+    "ERP Accounting - CRDRViewer" = "https://portalv3.rdpawnshop.com/app/winapplication/ERP_CRDRViewer/ERP Accounting - CRDRViewer.application"
+    "RDPOS" = "https://portalv3.rdpawnshop.com/app/winapplication/ecr/RDPOS.application"
+    "RDCashOps" = "https://portalv3.rdpawnshop.com/app/winapplication/RDCashOpsV3/waRDCashWF.application"
+    "Online Sales System Integrated" = "https://portalv3.rdpawnshop.com/app/winapplication/onlinesales/Sales System Integrated.application"
+    "KRA" = "https://portalv3.rdpawnshop.com/app/winapplication/kra/KRA.application"
+}
+
+$form = New-Object System.Windows.Forms.Form
+$form.Text = "LEMARBRYAN Toolbox 2.5"
+$form.Size = New-Object System.Drawing.Size(630, 540)
+$form.StartPosition = "CenterScreen"
+$form.BackColor = [System.Drawing.Color]::FromArgb(30, 30, 30)
+$form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
+$form.MaximizeBox = $false
+$form.MinimizeBox = $true
+
+$labelTitle = New-Object System.Windows.Forms.Label
+$labelTitle.Text = "RD PAWNSHOP ONLINE APPLICATIONS"
+$labelTitle.Font = New-Object System.Drawing.Font("Segoe UI", 18, [System.Drawing.FontStyle]::Bold)
+$labelTitle.ForeColor = [System.Drawing.Color]::White
+$labelTitle.AutoSize = $true
+$labelTitle.Location = New-Object System.Drawing.Point(50, 20)
+$form.Controls.Add($labelTitle)
+
+$listBox = New-Object System.Windows.Forms.ListBox
+$listBox.Location = New-Object System.Drawing.Point(50, 80)
+$listBox.Size = New-Object System.Drawing.Size(500, 220)
+$listBox.Font = New-Object System.Drawing.Font("Segoe UI", 12)
+$listBox.ForeColor = [System.Drawing.Color]::White
+$listBox.BackColor = [System.Drawing.Color]::FromArgb(40, 40, 40)
+$form.Controls.Add($listBox)
+
+$apps.GetEnumerator() | Sort-Object Key | ForEach-Object {
+    $listBox.Items.Add($_.Key)
+}
+
+$installButton = New-Object System.Windows.Forms.Button
+$installButton.Text = "INSTALL SELECTED APPLICATION"
+$installButton.Location = New-Object System.Drawing.Point(50, 310)
+$installButton.Size = New-Object System.Drawing.Size(500, 40)
+$installButton.Font = New-Object System.Drawing.Font("Segoe UI", 14, [System.Drawing.FontStyle]::Bold)
+$installButton.BackColor = [System.Drawing.Color]::FromArgb(76, 175, 80)
+$installButton.ForeColor = "White"
+$installButton.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+$installButton.Cursor = [System.Windows.Forms.Cursors]::Hand
+$form.Controls.Add($installButton)
+
+$installButton.Add_Click({
+    $selectedApp = $listBox.SelectedItem
+    if ($selectedApp) {
+        $url = $apps[$selectedApp]
+        try {
+            [System.Windows.Forms.MessageBox]::Show("Installing $selectedApp...", "Installer", "OK", "Information")
+            Start-Process "rundll32.exe" -ArgumentList "dfshim.dll,ShOpenVerbApplication $url"
+        } catch {
+            [System.Windows.Forms.MessageBox]::Show("There was an error installing the application. Please try again later.", "Error", "OK", "Error")
+        }
+    } else {
+        [System.Windows.Forms.MessageBox]::Show("Please select an app first.", "No Selection", "OK", "Warning")
+    }
+})
+
+$deleteButton = New-Object System.Windows.Forms.Button
+$deleteButton.Text = "Delete 2.0"
+$deleteButton.Location = New-Object System.Drawing.Point(50, 360)
+$deleteButton.Size = New-Object System.Drawing.Size(240, 40)
+$deleteButton.Font = New-Object System.Drawing.Font("Segoe UI", 12, [System.Drawing.FontStyle]::Bold)
+$deleteButton.BackColor = [System.Drawing.Color]::FromArgb(244, 67, 54)
+$deleteButton.ForeColor = "White"
+$deleteButton.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+$deleteButton.Cursor = [System.Windows.Forms.Cursors]::Hand
+$form.Controls.Add($deleteButton)
+
+$deleteButton.Add_Click({
+    $folderPath = Join-Path $env:LOCALAPPDATA "Apps\2.0"
+    if (Test-Path $folderPath) {
+        try {
+            Remove-Item -Path $folderPath -Recurse -Force
+            [System.Windows.Forms.MessageBox]::Show("Successfully deleted: `n$folderPath", "Success", "OK", "Information")
+        } catch {
+            [System.Windows.Forms.MessageBox]::Show("Error deleting folder:`n$($_.Exception.Message)", "Error", "OK", "Error")
+        }
+    } else {
+        [System.Windows.Forms.MessageBox]::Show("Folder not found:`n$folderPath", "Not Found", "OK", "Warning")
+    }
+})
+
+$otherAppsButton = New-Object System.Windows.Forms.Button
+$otherAppsButton.Text = "REQUIRED APPS"
+$otherAppsButton.Location = New-Object System.Drawing.Point(310, 360)
+$otherAppsButton.Size = New-Object System.Drawing.Size(240, 40)
+$otherAppsButton.Font = New-Object System.Drawing.Font("Segoe UI", 12, [System.Drawing.FontStyle]::Bold)
+$otherAppsButton.BackColor = [System.Drawing.Color]::FromArgb(33, 150, 243)
+$otherAppsButton.ForeColor = "White"
+$otherAppsButton.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+$otherAppsButton.Cursor = [System.Windows.Forms.Cursors]::Hand
+$form.Controls.Add($otherAppsButton)
+
+$otherAppsButton.Add_Click({
+    Show-RequiredAppsGUI
+})
+
+
+$exitButton = New-Object System.Windows.Forms.Button
+$exitButton.Text = "Exit"
+$exitButton.Location = New-Object System.Drawing.Point(50, 410)
+$exitButton.Size = New-Object System.Drawing.Size(500, 40)
+$exitButton.Font = New-Object System.Drawing.Font("Segoe UI", 14, [System.Drawing.FontStyle]::Bold)
+$exitButton.BackColor = [System.Drawing.Color]::FromArgb(120, 120, 120)
+$exitButton.ForeColor = "White"
+$exitButton.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+$exitButton.Cursor = [System.Windows.Forms.Cursors]::Hand
+$form.Controls.Add($exitButton)
+
+$exitButton.Add_Click({
+    $form.Close()
+})
+
+$themeIcon = New-Object System.Windows.Forms.Label
+$themeIcon.Text = [char]0x263D
+$themeIcon.Font = New-Object System.Drawing.Font("Segoe UI Emoji", 16)
+$themeIcon.Location = New-Object System.Drawing.Point(50, 465)
+$themeIcon.Size = New-Object System.Drawing.Size(40, 30)
+$themeIcon.ForeColor = "White"
+$form.Controls.Add($themeIcon)
+
+$toggleButton = New-Object System.Windows.Forms.Button
+$toggleButton.Text = "Dark Mode: ON"
+$toggleButton.Font = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)
+$toggleButton.Location = New-Object System.Drawing.Point(100, 463)
+$toggleButton.Size = New-Object System.Drawing.Size(140, 30)
+$toggleButton.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+$toggleButton.BackColor = [System.Drawing.Color]::FromArgb(100, 100, 100)
+$toggleButton.ForeColor = "White"
+$form.Controls.Add($toggleButton)
+
+$global:isDarkMode = $true
+
+function Set-Theme($dark) {
+    if ($dark) {
+        $form.BackColor = [System.Drawing.Color]::FromArgb(30, 30, 30)
+        $labelTitle.ForeColor = "White"
+        $listBox.BackColor = [System.Drawing.Color]::FromArgb(40, 40, 40)
+        $listBox.ForeColor = "White"
+        $installButton.BackColor = [System.Drawing.Color]::FromArgb(76, 175, 80)
+        $deleteButton.BackColor = [System.Drawing.Color]::FromArgb(244, 67, 54)
+        $exitButton.BackColor = [System.Drawing.Color]::FromArgb(120, 120, 120)
+        $themeIcon.ForeColor = "White"
+        $themeIcon.Text = [char]0x263D
+        $toggleButton.BackColor = [System.Drawing.Color]::FromArgb(100, 100, 100)
+        $toggleButton.ForeColor = "White"
+        $toggleButton.Text = "Dark Mode: ON"
+    } else {
+        $form.BackColor = "White"
+        $labelTitle.ForeColor = "Black"
+        $listBox.BackColor = "White"
+        $listBox.ForeColor = "Black"
+        $installButton.BackColor = [System.Drawing.Color]::FromArgb(33, 150, 243)
+        $deleteButton.BackColor = [System.Drawing.Color]::FromArgb(244, 67, 54)
+        $exitButton.BackColor = [System.Drawing.Color]::FromArgb(160, 160, 160)
+        $themeIcon.ForeColor = "Black"
+        $themeIcon.Text = [char]0x2600
+        $toggleButton.BackColor = [System.Drawing.Color]::FromArgb(200, 200, 200)
+        $toggleButton.ForeColor = "Black"
+        $toggleButton.Text = "Dark Mode: OFF"
+    }
+}
+
+$toggleButton.Add_Click({
+    $global:isDarkMode = -not $global:isDarkMode
+    Set-Theme $global:isDarkMode
+})
+
+Set-Theme $true
+$form.Topmost = $false
+$form.Add_Shown({ $form.Activate() })
+[void]$form.ShowDialog()
