@@ -338,6 +338,7 @@ $apps = @{
     "RDCashOps" = "https://portalv3.rdpawnshop.com/app/winapplication/RDCashOpsV3/waRDCashWF.application"
     "Online Sales System Integrated" = "https://portalv3.rdpawnshop.com/app/winapplication/onlinesales/Sales System Integrated.application"
     "KRA" = "https://portalv3.rdpawnshop.com/app/winapplication/kra/KRA.application"
+	"HelpDesk" = "https://portalv3.rdpawnshop.com/app/winapplication/helpdesk/TroubleID.application"
 }
 
 $form = New-Object System.Windows.Forms.Form
